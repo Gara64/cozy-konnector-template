@@ -1,42 +1,83 @@
-const { BaseKonnector, requestFactory, saveFiles, addData } = require('cozy-konnector-libs')
-const request = requestFactory({ cheerio: true })
+'use strict'
 
-const baseUrl = 'http://books.toscrape.com'
+const {BaseKonnector, saveFiles, request} = require('cozy-konnector-libs')
 
-module.exports = new BaseKonnector(start)
-
-// The start function is run by the BaseKonnector instance only when it got all the account
-// information (fields). When you run this connector yourself in "standalone" mode or "dev" mode,
-// the account information come from ./konnector-dev-config.json file
-function start (fields) {
-  // The BaseKonnector instance expects a Promise as return of the function
-  return request(`${baseUrl}/index.html`)
-  .then($ => {
-    // cheerio (https://cheerio.js.org/) uses the same api as jQuery (http://jquery.com/)
-    // here I do an Array.from to convert the cheerio fake array to a real js array.
-    const entries = Array.from($('article')).map(article => parseArticle($, article))
-    return addData(entries, 'com.toscrape.books')
-    .then(() => saveFiles(entries, fields))
-  })
-}
-
-// The goal of this function is to parse a html page wrapped by a cheerio instance // and return an array of js objects which will be saved to the cozy by addData (https://github.com/cozy/cozy-konnector-libs/blob/master/docs/api.md#module_addData)
-// and saveFiles (https://github.com/cozy/cozy-konnector-libs/blob/master/docs/api.md#savefiles)
-function parseArticle ($, article) {
-  const $article = $(article)
-  const title = $article.find('h3 a').attr('title')
-  return {
-    title,
-    price: normalizePrice($article.find('.price_color').text()),
-    url: `${baseUrl}/${$article.find('h3 a').attr('href')}`,
-    // when it finds a fileurl attribute, saveFiles will save this file to the cozy with a filename
-    // name
-    fileurl: `${baseUrl}/${$article.find('img').attr('src')}`,
-    filename: `${title}.jpg`
+const rq = request({
+    json: true,
+    jar: true
   }
-}
+)
+let idToken = ''
 
-// convert a price string to a float
-function normalizePrice (price) {
-  return parseFloat(price.trim().replace('£', ''))
-}
+module.exports = new BaseKonnector(requiredFields => {
+
+  // Authenticate
+  return rq({
+    uri: 'https://auth.payfit.com/signin',
+    method: 'POST',
+    body: {
+      email: requiredFields.email,
+      password: requiredFields.password,
+      username: requiredFields.username,
+      language: 'fr'
+    }
+  })
+  // Get Cookie
+  .then(body => {
+    let id = body.accounts[0].id
+    let tokens = id.split('/')
+    let companyId = tokens[0]
+    let employeeId = tokens[1]
+    idToken = body.idToken
+
+    return rq({
+      uri: 'https://auth.payfit.com/updateCurrentCompany?application=hr-apps/user&companyId=' +
+        companyId +
+        '&customApp=false&employeeId=' +
+        employeeId +
+        '&holdingId&idToken=' +
+        idToken +
+        '&origin=https://app.payfit.com'
+    })
+  })
+  // Get list of payrolls
+  .then(body => {
+    let res = rq({
+      method: 'POST',
+      uri: 'https://api.payfit.com/api/employees/payrolls',
+      headers: {
+        'Authorization': idToken
+      },
+    })
+    return res
+  })
+  // Retrieve payrolls
+  .then(body => {
+    console.log('body : ' + JSON.stringify(body))
+    let baseUrl = 'https://api.payfit.com/api'
+
+    let files = body.map(function(payroll) {
+      let url = baseUrl + payroll.url + '?' + idToken
+      // TODO: the fileName is the absoluteMonth, computed from the employee's
+      // contract signing month. Some scrapping is needed to get a more
+      // human-readable filename
+      return {
+        fileurl: url,
+        filename: payroll.absoluteMonth.toString() + '.pdf',
+        requestOptions: {
+          headers: {
+            'Authorization': idToken
+          }
+        }
+      }
+    })
+    return files
+  })
+  .then(entries => saveFiles(entries, requiredFields.folderPath))
+  .catch(err => {
+    // Connector is not in error if there is not entry in the end
+    // It may be simply an empty account
+    if (err.message === 'NO_ENTRY') return []
+    throw err
+  })
+});
