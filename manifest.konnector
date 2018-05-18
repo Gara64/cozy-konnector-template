@@ -1,13 +1,13 @@
 {
   "version": "1.0.0",
-  "name": "Connector template",
+  "name": "Just Eat",
   "type": "konnector",
   "language": "node",
   "icon": "icon.png",
-  "slug": "template",
-  "source": "git://github.com/konnectors/cozy-konnector-template.git",
+  "slug": "justeat",
+  "source": "git://github.com/konnectors/cozy-konnector-justeat.git",
   "editor": "Cozy",
-  "vendor_link": "Link to the target website",
+  "vendor_link": "https://www.just-eat.fr/connexion",
   "categories": ["other"],
   "fields": {
     "login": {
